@@ -12,7 +12,7 @@ Este é um projeto básico utilizando React Native com TypeScript, desenvolvido 
 
 ### Pré-requisitos
 
-- Node.js (recomendo a versão 18 com [nvm](https://github.com/nvm-sh/nvm))
+- Node.js (recomendo a versão v22.13.1 com [nvm](https://github.com/nvm-sh/nvm))
 - Java JDK 17+
 - Android Studio (com SDK, AVD ou dispositivo conectado via USB)
 - Yarn (ou npm)
