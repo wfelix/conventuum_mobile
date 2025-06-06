@@ -12,6 +12,7 @@ import {
   Vibration,
 } from 'react-native';
 import { Camera, CameraType } from 'react-native-camera-kit';
+import api from './api/useapi';
 
 interface PatientData {
   nome: string;
@@ -28,7 +29,19 @@ export default function App() {
 
   useEffect(() => {
     requestCameraPermission();
+    loadApiData();
   }, []);
+
+
+  const loadApiData = () => {
+    api.get('/appointments')
+      .then(function (response) {
+        console.log('Dados da API:', response.data);
+      })
+      .catch(function (error) {
+        console.log(error);
+      });
+  };
 
   const requestCameraPermission = async () => {
     try {
