@@ -10,6 +10,7 @@ import {
   Platform,
   PermissionsAndroid,
   Vibration,
+  ActivityIndicator,
 } from 'react-native';
 import { Camera, CameraType } from 'react-native-camera-kit';
 import api from './api/useapi';
@@ -19,6 +20,17 @@ interface PatientData {
   data: string;
   horario?: string;
   procedimento?: string;
+  confirmado?: boolean;
+  id?: string | number;
+}
+
+interface ApiAppointment {
+  id: string | number;
+  nome: string;
+  data: string;
+  horario: string;
+  procedimento: string;
+  confirmado: boolean;
 }
 
 export default function App() {
@@ -26,22 +38,37 @@ export default function App() {
   const [showModal, setShowModal] = useState(false);
   const [patientData, setPatientData] = useState<PatientData | null>(null);
   const [hasPermission, setHasPermission] = useState(false);
+  const [appointments, setAppointments] = useState<ApiAppointment[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [matchStatus, setMatchStatus] = useState<'match' | 'not_found' | 'time_mismatch' | null>(null);
 
   useEffect(() => {
     requestCameraPermission();
     loadApiData();
   }, []);
 
+  console.log('Entroooooooooooou');
 
   const loadApiData = () => {
+    setIsLoading(true);
     api.get('/appointments')
       .then(function (response) {
         console.log('Dados da API:', response.data);
+        setAppointments(response.data);
       })
       .catch(function (error) {
-        console.log(error);
+        console.log('Erro ao carregar agendamentos:', error);
+        Alert.alert(
+          'Erro',
+          'Não foi possível carregar os agendamentos. Verifique sua conexão.'
+        );
+      })
+      .finally(() => {
+        setIsLoading(false);
       });
   };
+
+  console.log('essa e novaaaaaaaa ',appointments);
 
   const requestCameraPermission = async () => {
     try {
@@ -65,32 +92,52 @@ export default function App() {
       setHasPermission(false);
     }
   };
-
   const parseQRData = (qrString: string): PatientData | null => {
     try {
-      // Tenta parsear como JSON primeiro
       const jsonData = JSON.parse(qrString);
+      
+      // Novo formato da API com token
+      if (jsonData.token && jsonData.customer_name && jsonData.scheduled_at) {
+        // Converte o formato da data ISO para o formato brasileiro
+        const date = new Date(jsonData.scheduled_at);
+        const formattedDate = date.toLocaleDateString('pt-BR');
+        const formattedTime = date.toLocaleTimeString('pt-BR', { 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        });
+        
+        return {
+          nome: jsonData.customer_name,
+          data: formattedDate,
+          horario: formattedTime,
+          procedimento: jsonData.doctor?.specialty || 'Consulta médica',
+          id: jsonData.token,
+          notes: jsonData.notes
+        };
+      }
+      
+      // Formato antigo
       if (jsonData.nome && jsonData.data) {
         return {
           nome: jsonData.nome,
           data: jsonData.data,
           horario: jsonData.horario || '',
-          procedimento: jsonData.procedimento || 'Consulta médica'
+          procedimento: jsonData.procedimento || 'Consulta médica',
+          id: jsonData.id
         };
       }
     } catch (e) {
-      // Se não for JSON, tenta parsear como string delimitada
       const parts = qrString.split('|');
       if (parts.length >= 2) {
         return {
           nome: parts[0] || 'Nome não informado',
           data: parts[1] || new Date().toLocaleDateString('pt-BR'),
           horario: parts[2] || '',
-          procedimento: parts[3] || 'Consulta médica'
+          procedimento: parts[3] || 'Consulta médica',
+          id: parts[4] || undefined
         };
       }
       
-      // Fallback: usa o QR como nome do paciente
       return {
         nome: qrString,
         data: new Date().toLocaleDateString('pt-BR'),
@@ -103,17 +150,68 @@ export default function App() {
     }
     return null;
   };
+  
 
+  const verifyAppointment = (data: PatientData): 'match' | 'not_found' | 'time_mismatch' => {
+    // Verificar se existem dados válidos antes de prosseguir
+    if (!data || !data.nome) {
+      return 'not_found';
+    }
+  
+    // Procura por correspondência exata (nome + data + horário)
+    const matchedAppointment = appointments.find(apt => 
+      apt.nome && 
+      apt.nome.toLowerCase() === data.nome.toLowerCase() && 
+      apt.data === data.data && 
+      apt.horario === data.horario
+    );
+  
+    if (matchedAppointment) {
+      return 'match';
+    }
+  
+    const patientExists = appointments.find(apt => 
+      apt.nome && 
+      apt.nome.toLowerCase() === data.nome.toLowerCase()
+    );
+  
+    if (patientExists) {
+      return 'time_mismatch';
+    }
+  
+    return 'not_found';
+  };
   const onBarcodeRead = (event: any) => {
-    console.log('QR Code lido:', event.nativeEvent.codeStringValue);
+    console.log('Entroooooooooooou');
+  
+    if (!event || !event.nativeEvent || !event.nativeEvent.codeStringValue) {
+      console.log('QR Code inválido ou vazio');
+      return;
+    }
+  
+    Vibration.vibrate(100);
+    console.log('QR Code lido', event.nativeEvent.codeStringValue);
     
     const parsedData = parseQRData(event.nativeEvent.codeStringValue);
-    
-    if (parsedData) {
-      Vibration.vibrate(100); // Feedback tátil
+  
+    console.log('Dados do QR Code:', parsedData);
+  
+    if (parsedData && parsedData.nome) {
+      Vibration.vibrate(100); 
+      
+      const status = verifyAppointment(parsedData);
+      setMatchStatus(status);
+      
       setPatientData(parsedData);
       setShowScanner(false);
       setShowModal(true);
+  
+      console.log('Status do agendamentoooooooooooooo:', parsedData);
+    } else {
+      Alert.alert(
+        'Erro no QR Code',
+        'O QR Code não contém informações válidas do paciente.'
+      );
     }
   };
 
@@ -135,23 +233,75 @@ export default function App() {
   const closeModal = () => {
     setShowModal(false);
     setPatientData(null);
+    setMatchStatus(null);
   };
 
   const confirmAppointment = () => {
+    
+      api.get('/appointments')
+        .then(function (response) {
+          console.log('Dados da API:', response.data);
+          setAppointments(response.data);
+        })
+        .catch(function (error) {
+          console.log('Erro ao carregar agendamentos:', error);
+          Alert.alert(
+            'Erro',
+            'Não foi possível carregar os agendamentos. Verifique sua conexão.'
+          );
+        })
+        .finally(() => {
+          setIsLoading(false);
+        });
+    
+
+    
+    let message = '';
+    let title = '';
+    
+    switch (matchStatus) {
+      case 'match':
+        title = 'Agendamento Confirmado!';
+        message = `Paciente: ${patientData?.nome}\nData: ${patientData?.data}\nHorário: ${patientData?.horario}\nProcedimento: ${patientData?.procedimento}`;
+        break;
+      case 'time_mismatch':
+        title = 'Horário Incorreto!';
+        message = `O paciente ${patientData?.nome} possui agendamento, mas em outra data/horário.\nVerifique o agendamento correto no sistema.`;
+        break;
+      case 'not_found':
+        title = 'Agendamento Não Encontrado!';
+        message = `Não foi encontrado agendamento para:\nPaciente: ${patientData?.nome}\nData: ${patientData?.data}\nHorário: ${patientData?.horario}`;
+        break;
+      default:
+        title = 'Aviso';
+        message = 'Não foi possível verificar o agendamento. Tente novamente.';
+    }
+
+
+    
     Alert.alert(
-      'Agendamento Confirmado!',
-      `Paciente: ${patientData?.nome}\nData: ${patientData?.data}\nHorário: ${patientData?.horario}\nProcedimento: ${patientData?.procedimento}`,
+      title,
+      message,
       [
         {
           text: 'OK',
           onPress: () => {
-            console.log('Agendamento confirmado para:', patientData);
+            console.log('Verificação de agendamento:', patientData, matchStatus);
             closeModal();
           }
         }
       ]
     );
   };
+
+  if (isLoading) {
+    return (
+      <View style={[styles.main, styles.loadingContainer]}>
+        <ActivityIndicator size="large" color="#3B82F6" />
+        <Text style={styles.loadingText}>Carregando agendamentos...</Text>
+      </View>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.main}>
@@ -161,11 +311,26 @@ export default function App() {
           <Text style={styles.subtitulo}>
             Escaneie o código QR do paciente para confirmar o agendamento
           </Text>
+          
+          {appointments.length > 0 && (
+            <View style={styles.appointmentCountContainer}>
+              <Text style={styles.appointmentCount}>
+                {appointments.length} agendamentos carregados
+              </Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.buttonContainer}>
           <TouchableOpacity style={styles.scanButton} onPress={openScanner}>
             <Text style={styles.scanButtonText}>📱 Escanear QR Code</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.reloadButton} 
+            onPress={loadApiData}
+          >
+            <Text style={styles.reloadButtonText}>↻ Recarregar Agendamentos</Text>
           </TouchableOpacity>
         </View>
 
@@ -195,6 +360,7 @@ export default function App() {
 
           <Camera
             style={styles.camera}
+            scanBarcode={true}
             cameraType={CameraType.Back}
             onReadCode={onBarcodeRead}
             showFrame={true}
@@ -219,7 +385,30 @@ export default function App() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Confirmar Agendamento</Text>
+            <Text style={styles.modalTitle}>
+              {matchStatus === 'match' 
+                ? 'Confirmar Agendamento' 
+                : matchStatus === 'time_mismatch'
+                ? 'Horário Incorreto'
+                : 'Agendamento Não Encontrado'}
+            </Text>
+            
+            {matchStatus !== null && (
+              <View style={[
+                styles.statusBadge,
+                matchStatus === 'match' ? styles.statusMatch : 
+                matchStatus === 'time_mismatch' ? styles.statusMismatch : 
+                styles.statusNotFound
+              ]}>
+                {/* <Text style={styles.statusText}>
+                  {matchStatus === 'match' 
+                    ? '✓ Agendamento encontrado' 
+                    : matchStatus === 'time_mismatch'
+                    ? '⚠️ Horário diferente do agendado'
+                    : '✕ Agendamento não encontrado'}
+                </Text> */}
+              </View>
+            )}
             
             <View style={styles.patientInfo}>
               <View style={styles.infoRow}>
@@ -254,10 +443,16 @@ export default function App() {
               </TouchableOpacity>
               
               <TouchableOpacity 
-                style={[styles.modalButton, styles.confirmButton]} 
+                style={[
+                  styles.modalButton, 
+                  styles.confirmButton,
+                  matchStatus !== 'match' && styles.confirmButtonWarning
+                ]} 
                 onPress={confirmAppointment}
               >
-                <Text style={styles.confirmButtonText}>Confirmar</Text>
+                <Text style={styles.confirmButtonText}>
+                  {matchStatus === 'match' ? 'Confirmar' : 'Verificar'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -271,6 +466,15 @@ const styles = StyleSheet.create({
   main: {
     flex: 1,
     backgroundColor: '#ffffff',
+  },
+  loadingContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#6B7280',
   },
   content: {
     flex: 1,
@@ -296,10 +500,24 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     textAlign: 'center',
     lineHeight: 24,
+    marginBottom: 16,
+  },
+  appointmentCountContainer: {
+    marginTop: 16,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: '#EFF6FF',
+    borderRadius: 20,
+  },
+  appointmentCount: {
+    color: '#3B82F6',
+    fontSize: 14,
+    fontWeight: '600',
   },
   buttonContainer: {
     width: '100%',
     paddingHorizontal: 20,
+    gap: 16,
   },
   scanButton: {
     backgroundColor: '#3B82F6',
@@ -317,6 +535,15 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 20,
     fontWeight: 'bold',
+  },
+  reloadButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+  },
+  reloadButtonText: {
+    color: '#4B5563',
+    fontSize: 16,
   },
   footerText: {
     fontSize: 14,
@@ -390,8 +617,27 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: 'bold',
     textAlign: 'center',
-    marginBottom: 24,
+    marginBottom: 16,
     color: '#1F2937',
+  },
+  statusBadge: {
+    marginBottom: 16,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  statusMatch: {
+    backgroundColor: '#D1FAE5',
+  },
+  statusMismatch: {
+    backgroundColor: '#FEF3C7',
+  },
+  statusNotFound: {
+    backgroundColor: '#FEE2E2',
+  },
+  statusText: {
+    fontWeight: '600',
+    fontSize: 14,
   },
   patientInfo: {
     marginBottom: 24,
@@ -437,6 +683,10 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.3,
     shadowRadius: 4,
+  },
+  confirmButtonWarning: {
+    backgroundColor: '#F59E0B',
+    shadowColor: '#F59E0B',
   },
   cancelButtonText: {
     color: '#6B7280',
